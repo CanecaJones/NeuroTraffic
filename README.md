@@ -14,7 +14,7 @@ para otimizar o controle de semáforos em um cruzamento.
 
 ## Status do Projeto
 
-🚧 Em desenvolvimento — Etapa 3 (primeiros carros).
+🚧 Em desenvolvimento — Etapa 4 (movimentação dos carros).
 
 ## Tecnologias
 
@@ -66,7 +66,7 @@ npx serve .
 1. Estrutura inicial do projeto ✅
 2. Ambiente visual com rua e cruzamento ✅
 3. Primeiros carros ✅
-4. Movimentação dos carros
+4. Movimentação dos carros ✅
 5. Geração aleatória de veículos
 6. Semáforos
 7. Regras básicas de trânsito

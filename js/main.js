@@ -1,26 +1,93 @@
 // NeuroTraffic - Ponto de entrada da simulação
-// Etapa 3: adiciona os primeiros carros (ainda estáticos, sem movimento).
+// Etapa 4: adiciona o loop de animação e movimentação dos carros.
 
 const ROAD_WIDTH = 120;
 
+let canvas;
+let ctx;
+let cars;
+let lastTimestamp = null;
+
 document.addEventListener("DOMContentLoaded", () => {
-  const canvas = document.getElementById("simulationCanvas");
-  const ctx = canvas.getContext("2d");
+  canvas = document.getElementById("simulationCanvas");
+  ctx = canvas.getContext("2d");
 
-  const cars = createInitialCars(canvas);
+  cars = createInitialCars(canvas);
 
+  console.log("NeuroTraffic: iniciando loop de animação. Pronto para a Etapa 5.");
+  requestAnimationFrame(gameLoop);
+});
+
+/**
+ * Loop principal da simulação. Calcula o tempo decorrido desde o último
+ * quadro (delta time), atualiza o estado dos carros e redesenha a cena.
+ */
+function gameLoop(timestamp) {
+  if (lastTimestamp === null) {
+    lastTimestamp = timestamp;
+  }
+
+  const deltaSeconds = (timestamp - lastTimestamp) / 1000;
+  lastTimestamp = timestamp;
+
+  update(deltaSeconds);
+  render();
+
+  requestAnimationFrame(gameLoop);
+}
+
+/**
+ * Atualiza a posição de cada carro com base em sua velocidade e direção.
+ * Por enquanto, quando um carro sai completamente do canvas, ele é
+ * reposicionado do outro lado (wrap-around), apenas para permitir testar
+ * a movimentação de forma contínua antes de existir um sistema de
+ * geração/remoção de veículos (Etapa 5).
+ */
+function update(deltaSeconds) {
+  cars.forEach((car) => {
+    car.x += Math.cos(car.direction) * car.speed * deltaSeconds;
+    car.y += Math.sin(car.direction) * car.speed * deltaSeconds;
+
+    wrapCarPosition(car, canvas);
+  });
+}
+
+/**
+ * Reposiciona o carro do lado oposto do canvas quando ele sai
+ * completamente da área visível, mantendo a mesma faixa (lane).
+ */
+function wrapCarPosition(car, canvas) {
+  const margin = 40; // folga para o carro sumir completamente antes de reaparecer
+
+  if (car.x < -margin) {
+    car.x = canvas.width + margin;
+  } else if (car.x > canvas.width + margin) {
+    car.x = -margin;
+  }
+
+  if (car.y < -margin) {
+    car.y = canvas.height + margin;
+  } else if (car.y > canvas.height + margin) {
+    car.y = -margin;
+  }
+}
+
+/**
+ * Redesenha a cena inteira: fundo, ruas, cruzamento e todos os carros
+ * em suas posições atuais.
+ */
+function render() {
   drawScene(ctx, canvas);
   cars.forEach((car) => drawCar(ctx, car));
-
-  console.log("NeuroTraffic: primeiros carros desenhados (estáticos). Pronto para a Etapa 4.");
-});
+}
 
 /**
  * Cria a lista inicial de carros, um vindo de cada direção (norte, sul,
  * leste, oeste), posicionados na faixa correta e já orientados em
- * direção ao cruzamento. Nenhum movimento é aplicado ainda.
+ * direção ao cruzamento. Cada carro possui uma velocidade constante
+ * (em pixels por segundo).
  *
- * direction: ângulo em radianos usado para rotacionar o desenho do carro.
+ * direction: ângulo em radianos usado para mover e rotacionar o carro.
  *   0 = indo para a direita (leste)
  *   Math.PI / 2 = indo para baixo (sul)
  *   Math.PI = indo para a esquerda (oeste)
@@ -40,6 +107,7 @@ function createInitialCars(canvas) {
       height: 16,
       color: "#e53935",
       direction: 0,
+      speed: 80,
     },
     {
       id: "car-east-to-west",
@@ -49,6 +117,7 @@ function createInitialCars(canvas) {
       height: 16,
       color: "#1e88e5",
       direction: Math.PI,
+      speed: 80,
     },
     {
       id: "car-north-to-south",
@@ -58,6 +127,7 @@ function createInitialCars(canvas) {
       height: 16,
       color: "#fdd835",
       direction: Math.PI / 2,
+      speed: 80,
     },
     {
       id: "car-south-to-north",
@@ -67,6 +137,7 @@ function createInitialCars(canvas) {
       height: 16,
       color: "#8e24aa",
       direction: -Math.PI / 2,
+      speed: 80,
     },
   ];
 }
