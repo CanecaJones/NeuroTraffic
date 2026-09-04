@@ -1,20 +1,33 @@
 // NeuroTraffic - Ponto de entrada da simulação
-// Etapa 4: adiciona o loop de animação e movimentação dos carros.
+// Etapa 5: substitui os carros fixos por geração aleatória de veículos.
 
 const ROAD_WIDTH = 120;
+const MAX_CARS = 12;
+const SPAWN_MIN_INTERVAL = 0.8; // segundos
+const SPAWN_MAX_INTERVAL = 2.2; // segundos
+const CAR_COLORS = ["#e53935", "#1e88e5", "#fdd835", "#8e24aa", "#43a047", "#fb8c00"];
+
+const DIRECTIONS = {
+  FROM_WEST: "from-west", // entra pela esquerda, indo para leste
+  FROM_EAST: "from-east", // entra pela direita, indo para oeste
+  FROM_NORTH: "from-north", // entra por cima, indo para sul
+  FROM_SOUTH: "from-south", // entra por baixo, indo para norte
+};
 
 let canvas;
 let ctx;
-let cars;
+let cars = [];
 let lastTimestamp = null;
+let spawnTimer = 0;
+let nextCarId = 0;
 
 document.addEventListener("DOMContentLoaded", () => {
   canvas = document.getElementById("simulationCanvas");
   ctx = canvas.getContext("2d");
 
-  cars = createInitialCars(canvas);
+  spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
 
-  console.log("NeuroTraffic: iniciando loop de animação. Pronto para a Etapa 5.");
+  console.log("NeuroTraffic: geração aleatória de veículos ativada. Pronto para a Etapa 6.");
   requestAnimationFrame(gameLoop);
 });
 
@@ -37,39 +50,116 @@ function gameLoop(timestamp) {
 }
 
 /**
- * Atualiza a posição de cada carro com base em sua velocidade e direção.
- * Por enquanto, quando um carro sai completamente do canvas, ele é
- * reposicionado do outro lado (wrap-around), apenas para permitir testar
- * a movimentação de forma contínua antes de existir um sistema de
- * geração/remoção de veículos (Etapa 5).
+ * Atualiza a simulação a cada quadro:
+ * - move os carros existentes;
+ * - remove os carros que saíram completamente do canvas;
+ * - controla o timer de geração e cria novos carros aleatoriamente.
  */
 function update(deltaSeconds) {
   cars.forEach((car) => {
     car.x += Math.cos(car.direction) * car.speed * deltaSeconds;
     car.y += Math.sin(car.direction) * car.speed * deltaSeconds;
-
-    wrapCarPosition(car, canvas);
   });
+
+  cars = cars.filter((car) => !hasLeftCanvas(car, canvas));
+
+  updateSpawning(deltaSeconds);
 }
 
 /**
- * Reposiciona o carro do lado oposto do canvas quando ele sai
- * completamente da área visível, mantendo a mesma faixa (lane).
+ * Controla o timer de geração de veículos. Quando o timer chega a zero,
+ * tenta gerar um novo carro (respeitando o limite máximo simultâneo) e
+ * sorteia um novo intervalo até a próxima geração.
  */
-function wrapCarPosition(car, canvas) {
-  const margin = 40; // folga para o carro sumir completamente antes de reaparecer
+function updateSpawning(deltaSeconds) {
+  spawnTimer -= deltaSeconds;
 
-  if (car.x < -margin) {
-    car.x = canvas.width + margin;
-  } else if (car.x > canvas.width + margin) {
-    car.x = -margin;
+  if (spawnTimer <= 0) {
+    if (cars.length < MAX_CARS) {
+      cars.push(createRandomCar(canvas));
+    }
+    spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
+  }
+}
+
+/**
+ * Verifica se um carro já saiu completamente da área visível do canvas,
+ * considerando sua direção de movimento.
+ */
+function hasLeftCanvas(car, canvas) {
+  const margin = 40;
+
+  switch (car.spawnDirection) {
+    case DIRECTIONS.FROM_WEST:
+      return car.x > canvas.width + margin;
+    case DIRECTIONS.FROM_EAST:
+      return car.x < -margin;
+    case DIRECTIONS.FROM_NORTH:
+      return car.y > canvas.height + margin;
+    case DIRECTIONS.FROM_SOUTH:
+      return car.y < -margin;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Cria um carro em uma das quatro entradas do cenário, escolhida
+ * aleatoriamente, já posicionado na faixa correta e fora da área visível
+ * do canvas (para "entrar" na cena de forma natural).
+ */
+function createRandomCar(canvas) {
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const laneOffset = ROAD_WIDTH / 4;
+  const spawnMargin = 40;
+
+  const directionKeys = Object.values(DIRECTIONS);
+  const spawnDirection = directionKeys[Math.floor(Math.random() * directionKeys.length)];
+
+  let x, y, angle;
+
+  switch (spawnDirection) {
+    case DIRECTIONS.FROM_WEST:
+      x = -spawnMargin;
+      y = centerY + laneOffset;
+      angle = 0;
+      break;
+    case DIRECTIONS.FROM_EAST:
+      x = canvas.width + spawnMargin;
+      y = centerY - laneOffset;
+      angle = Math.PI;
+      break;
+    case DIRECTIONS.FROM_NORTH:
+      x = centerX + laneOffset;
+      y = -spawnMargin;
+      angle = Math.PI / 2;
+      break;
+    case DIRECTIONS.FROM_SOUTH:
+      x = centerX - laneOffset;
+      y = canvas.height + spawnMargin;
+      angle = -Math.PI / 2;
+      break;
   }
 
-  if (car.y < -margin) {
-    car.y = canvas.height + margin;
-  } else if (car.y > canvas.height + margin) {
-    car.y = -margin;
-  }
+  return {
+    id: `car-${nextCarId++}`,
+    x,
+    y,
+    width: 30,
+    height: 16,
+    color: CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
+    direction: angle,
+    spawnDirection,
+    speed: randomBetween(70, 110),
+  };
+}
+
+/**
+ * Retorna um número aleatório entre min e max (inclusive min, exclusive max).
+ */
+function randomBetween(min, max) {
+  return Math.random() * (max - min) + min;
 }
 
 /**
@@ -82,71 +172,8 @@ function render() {
 }
 
 /**
- * Cria a lista inicial de carros, um vindo de cada direção (norte, sul,
- * leste, oeste), posicionados na faixa correta e já orientados em
- * direção ao cruzamento. Cada carro possui uma velocidade constante
- * (em pixels por segundo).
- *
- * direction: ângulo em radianos usado para mover e rotacionar o carro.
- *   0 = indo para a direita (leste)
- *   Math.PI / 2 = indo para baixo (sul)
- *   Math.PI = indo para a esquerda (oeste)
- *   -Math.PI / 2 = indo para cima (norte)
- */
-function createInitialCars(canvas) {
-  const centerX = canvas.width / 2;
-  const centerY = canvas.height / 2;
-  const laneOffset = ROAD_WIDTH / 4;
-
-  return [
-    {
-      id: "car-west-to-east",
-      x: 150,
-      y: centerY + laneOffset,
-      width: 30,
-      height: 16,
-      color: "#e53935",
-      direction: 0,
-      speed: 80,
-    },
-    {
-      id: "car-east-to-west",
-      x: 650,
-      y: centerY - laneOffset,
-      width: 30,
-      height: 16,
-      color: "#1e88e5",
-      direction: Math.PI,
-      speed: 80,
-    },
-    {
-      id: "car-north-to-south",
-      x: centerX + laneOffset,
-      y: 150,
-      width: 30,
-      height: 16,
-      color: "#fdd835",
-      direction: Math.PI / 2,
-      speed: 80,
-    },
-    {
-      id: "car-south-to-north",
-      x: centerX - laneOffset,
-      y: 450,
-      width: 30,
-      height: 16,
-      color: "#8e24aa",
-      direction: -Math.PI / 2,
-      speed: 80,
-    },
-  ];
-}
-
-/**
  * Desenha um único carro no canvas, como um retângulo com cantos
  * arredondados e uma pequena faixa indicando a frente do veículo.
- * O carro é sempre desenhado com largura > altura no espaço local,
- * e rotacionado conforme sua direção de movimento.
  */
 function drawCar(ctx, car) {
   ctx.save();
