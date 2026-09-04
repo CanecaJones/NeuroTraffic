@@ -32,15 +32,51 @@ header p {
 main {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
   padding: 20px;
+  gap: 20px;
 }
 
 #simulationCanvas {
   background-color: #2b2b2b;
   border: 2px solid #4caf50;
   border-radius: 8px;
+}
+
+.metrics-panel {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 800px;
+}
+
+.metric {
+  background-color: #2b2b2b;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  padding: 12px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 150px;
+  flex: 1;
+}
+
+.metric-label {
+  font-size: 0.8rem;
+  color: #aaaaaa;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.metric-value {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #4caf50;
+  margin-top: 4px;
 }
 
 footer {

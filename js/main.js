@@ -1,8 +1,6 @@
 // NeuroTraffic - Ponto de entrada da simulação
-// Etapa 7: adiciona regras básicas de trânsito:
-//   - carros param antes do cruzamento quando o sinal do seu grupo não está verde;
-//   - carros respeitam a fila (não ultrapassam o carro da frente);
-//   - isso evita colisões simples entre carros da mesma faixa.
+// Etapa 8: adiciona o sistema de métricas (tempo médio de espera, fila
+// atual, total de carros gerados e total de carros que atravessaram).
 
 const ROAD_WIDTH = 120;
 const MAX_CARS = 12;
@@ -12,6 +10,7 @@ const CAR_COLORS = ["#e53935", "#1e88e5", "#fdd835", "#8e24aa", "#43a047", "#fb8
 const CAR_LENGTH = 30; // igual à largura do carro (no eixo de movimento)
 const MIN_GAP = 8; // distância mínima entre o para-choque de um carro e o do próximo
 const STOP_GAP = 6; // distância entre o nariz do carro e a linha de parada
+const WAITING_MOVEMENT_THRESHOLD = 1; // px por quadro abaixo do qual o carro é considerado "parado"
 
 const DIRECTIONS = {
   FROM_WEST: "from-west", // entra pela esquerda, indo para leste
@@ -52,6 +51,8 @@ let spawnTimer = 0;
 let nextCarId = 0;
 
 let trafficLights;
+let metrics;
+let metricsElements;
 
 document.addEventListener("DOMContentLoaded", () => {
   canvas = document.getElementById("simulationCanvas");
@@ -59,8 +60,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
   trafficLights = createTrafficLightSystem();
+  metrics = createMetrics();
+  metricsElements = {
+    spawned: document.getElementById("metric-spawned"),
+    crossed: document.getElementById("metric-crossed"),
+    avgWait: document.getElementById("metric-avg-wait"),
+    queue: document.getElementById("metric-queue"),
+  };
 
-  console.log("NeuroTraffic: regras básicas de trânsito ativas. Pronto para a Etapa 8.");
+  console.log("NeuroTraffic: sistema de métricas ativo. Pronto para a Etapa 9.");
   requestAnimationFrame(gameLoop);
 });
 
@@ -84,16 +92,37 @@ function gameLoop(timestamp) {
 
 /**
  * Atualiza a simulação a cada quadro: avança os semáforos, move os
- * carros respeitando sinais e fila, remove os que saíram do canvas e
- * controla a geração de novos veículos.
+ * carros respeitando sinais e fila, remove os que saíram do canvas
+ * (contabilizando métricas) e controla a geração de novos veículos.
  */
 function update(deltaSeconds) {
   updateTrafficLights(deltaSeconds);
   moveCarsWithTrafficRules(deltaSeconds);
 
-  cars = cars.filter((car) => !hasLeftCanvas(car, canvas));
+  cars = cars.filter((car) => {
+    const hasLeft = hasLeftCanvas(car, canvas);
+    if (hasLeft) {
+      metrics.totalCrossed += 1;
+      metrics.totalWaitTimeSum += car.waitTime;
+    }
+    return !hasLeft;
+  });
+
+  metrics.currentQueue = cars.filter((car) => car.isWaiting).length;
 
   updateSpawning(deltaSeconds);
+}
+
+/**
+ * Cria o objeto de métricas inicial, zerado.
+ */
+function createMetrics() {
+  return {
+    totalSpawned: 0,
+    totalCrossed: 0,
+    totalWaitTimeSum: 0, // soma do tempo de espera (em segundos) de todos os carros que já atravessaram
+    currentQueue: 0,
+  };
 }
 
 /**
@@ -103,9 +132,9 @@ function update(deltaSeconds) {
  *   2. Não ultrapassar o carro imediatamente à frente na mesma faixa
  *      (mesma direção de entrada), evitando colisões.
  *
- * Para isso, cada carro é tratado em um eixo de "progresso" (p), que
- * cresce conforme o carro avança em direção ao seu destino, independente
- * de estar se movendo em x ou em y, ou em sentido positivo ou negativo.
+ * Também mede, para cada carro, se ele está "parado" neste quadro
+ * (movimento efetivo abaixo de um limite), acumulando isso em
+ * car.waitTime para calcular métricas de espera.
  */
 function moveCarsWithTrafficRules(deltaSeconds) {
   const carsByDirection = groupCarsByDirection(cars);
@@ -139,6 +168,13 @@ function moveCarsWithTrafficRules(deltaSeconds) {
 
       // O carro nunca anda para trás.
       const newProgress = Math.max(currentProgress, allowedProgress);
+
+      // Métricas: se o carro avançou muito pouco neste quadro, ele está "esperando".
+      const actualMovement = newProgress - currentProgress;
+      car.isWaiting = actualMovement < WAITING_MOVEMENT_THRESHOLD;
+      if (car.isWaiting) {
+        car.waitTime += deltaSeconds;
+      }
 
       setProgress(car, newProgress);
       previousCarProgress = newProgress;
@@ -268,6 +304,7 @@ function updateSpawning(deltaSeconds) {
   if (spawnTimer <= 0) {
     if (cars.length < MAX_CARS) {
       cars.push(createRandomCar(canvas));
+      metrics.totalSpawned += 1;
     }
     spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
   }
@@ -378,6 +415,8 @@ function createRandomCar(canvas) {
     direction: angle,
     spawnDirection,
     speed: randomBetween(70, 110),
+    waitTime: 0,
+    isWaiting: false,
   };
 }
 
@@ -389,13 +428,28 @@ function randomBetween(min, max) {
 }
 
 /**
- * Redesenha a cena inteira: fundo, ruas, cruzamento, semáforos e todos
- * os carros em suas posições atuais.
+ * Redesenha a cena inteira: fundo, ruas, cruzamento, semáforos, todos os
+ * carros em suas posições atuais, e atualiza o painel de métricas.
  */
 function render() {
   drawScene(ctx, canvas);
   drawTrafficLights(ctx, canvas);
   cars.forEach((car) => drawCar(ctx, car));
+  renderMetricsPanel();
+}
+
+/**
+ * Atualiza os elementos do DOM do painel de métricas com os valores
+ * atuais: total gerado, total que atravessou, tempo médio de espera e
+ * tamanho da fila atual.
+ */
+function renderMetricsPanel() {
+  const averageWait = metrics.totalCrossed > 0 ? metrics.totalWaitTimeSum / metrics.totalCrossed : 0;
+
+  metricsElements.spawned.textContent = metrics.totalSpawned;
+  metricsElements.crossed.textContent = metrics.totalCrossed;
+  metricsElements.avgWait.textContent = `${averageWait.toFixed(1)}s`;
+  metricsElements.queue.textContent = metrics.currentQueue;
 }
 
 /**
