@@ -14,7 +14,7 @@ para otimizar o controle de semáforos em um cruzamento.
 
 ## Status do Projeto
 
-🚧 Em desenvolvimento — Etapa 6 (semáforos).
+🚧 Em desenvolvimento — Etapa 7 (regras básicas de trânsito).
 
 ## Tecnologias
 
@@ -69,7 +69,7 @@ npx serve .
 4. Movimentação dos carros ✅
 5. Geração aleatória de veículos ✅
 6. Semáforos ✅
-7. Regras básicas de trânsito
+7. Regras básicas de trânsito ✅
 8. Sistema de métricas
 9. Algoritmo simples de decisão
 10. Introdução da Inteligência Artificial

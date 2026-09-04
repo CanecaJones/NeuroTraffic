@@ -1,13 +1,17 @@
 // NeuroTraffic - Ponto de entrada da simulação
-// Etapa 6: adiciona os semáforos (visual + lógica básica de estados).
-// Observação: nesta etapa os carros AINDA NÃO obedecem aos semáforos.
-// Isso será implementado na Etapa 7 (regras básicas de trânsito).
+// Etapa 7: adiciona regras básicas de trânsito:
+//   - carros param antes do cruzamento quando o sinal do seu grupo não está verde;
+//   - carros respeitam a fila (não ultrapassam o carro da frente);
+//   - isso evita colisões simples entre carros da mesma faixa.
 
 const ROAD_WIDTH = 120;
 const MAX_CARS = 12;
 const SPAWN_MIN_INTERVAL = 0.8; // segundos
 const SPAWN_MAX_INTERVAL = 2.2; // segundos
 const CAR_COLORS = ["#e53935", "#1e88e5", "#fdd835", "#8e24aa", "#43a047", "#fb8c00"];
+const CAR_LENGTH = 30; // igual à largura do carro (no eixo de movimento)
+const MIN_GAP = 8; // distância mínima entre o para-choque de um carro e o do próximo
+const STOP_GAP = 6; // distância entre o nariz do carro e a linha de parada
 
 const DIRECTIONS = {
   FROM_WEST: "from-west", // entra pela esquerda, indo para leste
@@ -56,7 +60,7 @@ document.addEventListener("DOMContentLoaded", () => {
   spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
   trafficLights = createTrafficLightSystem();
 
-  console.log("NeuroTraffic: semáforos ativos. Pronto para a Etapa 7.");
+  console.log("NeuroTraffic: regras básicas de trânsito ativas. Pronto para a Etapa 8.");
   requestAnimationFrame(gameLoop);
 });
 
@@ -79,20 +83,178 @@ function gameLoop(timestamp) {
 }
 
 /**
- * Atualiza a simulação a cada quadro: move os carros, remove os que
- * saíram do canvas, controla a geração de novos veículos e avança o
- * estado dos semáforos.
+ * Atualiza a simulação a cada quadro: avança os semáforos, move os
+ * carros respeitando sinais e fila, remove os que saíram do canvas e
+ * controla a geração de novos veículos.
  */
 function update(deltaSeconds) {
-  cars.forEach((car) => {
-    car.x += Math.cos(car.direction) * car.speed * deltaSeconds;
-    car.y += Math.sin(car.direction) * car.speed * deltaSeconds;
-  });
+  updateTrafficLights(deltaSeconds);
+  moveCarsWithTrafficRules(deltaSeconds);
 
   cars = cars.filter((car) => !hasLeftCanvas(car, canvas));
 
   updateSpawning(deltaSeconds);
-  updateTrafficLights(deltaSeconds);
+}
+
+/**
+ * Move todos os carros respeitando duas regras básicas:
+ *   1. Não ultrapassar a linha de parada quando o semáforo do seu grupo
+ *      não estiver verde (a menos que já tenha entrado no cruzamento).
+ *   2. Não ultrapassar o carro imediatamente à frente na mesma faixa
+ *      (mesma direção de entrada), evitando colisões.
+ *
+ * Para isso, cada carro é tratado em um eixo de "progresso" (p), que
+ * cresce conforme o carro avança em direção ao seu destino, independente
+ * de estar se movendo em x ou em y, ou em sentido positivo ou negativo.
+ */
+function moveCarsWithTrafficRules(deltaSeconds) {
+  const carsByDirection = groupCarsByDirection(cars);
+
+  Object.keys(carsByDirection).forEach((direction) => {
+    const group = carsByDirection[direction];
+
+    // Ordena do carro mais avançado (mais próximo do destino) para o mais atrasado,
+    // para que cada carro só possa ser limitado pelo carro processado antes dele.
+    group.sort((a, b) => getProgress(b) - getProgress(a));
+
+    let previousCarProgress = null;
+
+    group.forEach((car) => {
+      const currentProgress = getProgress(car);
+      const desiredProgress = currentProgress + car.speed * deltaSeconds;
+
+      let allowedProgress = desiredProgress;
+
+      // Regra 1: respeitar o carro da frente (mesma direção).
+      if (previousCarProgress !== null) {
+        const maxProgressBehindCarAhead = previousCarProgress - CAR_LENGTH - MIN_GAP;
+        allowedProgress = Math.min(allowedProgress, maxProgressBehindCarAhead);
+      }
+
+      // Regra 2: respeitar o semáforo, exceto se o carro já entrou no cruzamento.
+      const stopLimit = getStopLimit(car, currentProgress);
+      if (stopLimit !== null) {
+        allowedProgress = Math.min(allowedProgress, stopLimit);
+      }
+
+      // O carro nunca anda para trás.
+      const newProgress = Math.max(currentProgress, allowedProgress);
+
+      setProgress(car, newProgress);
+      previousCarProgress = newProgress;
+    });
+  });
+}
+
+/**
+ * Agrupa os carros por direção de entrada (spawnDirection).
+ */
+function groupCarsByDirection(cars) {
+  const groups = {};
+  cars.forEach((car) => {
+    if (!groups[car.spawnDirection]) {
+      groups[car.spawnDirection] = [];
+    }
+    groups[car.spawnDirection].push(car);
+  });
+  return groups;
+}
+
+/**
+ * Retorna o "progresso" do carro ao longo de seu caminho: um valor que
+ * sempre aumenta conforme o carro se aproxima do seu destino, seja qual
+ * for o eixo (x ou y) e o sentido real do movimento.
+ */
+function getProgress(car) {
+  switch (car.spawnDirection) {
+    case DIRECTIONS.FROM_WEST:
+      return car.x;
+    case DIRECTIONS.FROM_EAST:
+      return -car.x;
+    case DIRECTIONS.FROM_NORTH:
+      return car.y;
+    case DIRECTIONS.FROM_SOUTH:
+      return -car.y;
+  }
+}
+
+/**
+ * Aplica um valor de progresso de volta à posição real (x ou y) do carro,
+ * de acordo com sua direção de entrada.
+ */
+function setProgress(car, progress) {
+  switch (car.spawnDirection) {
+    case DIRECTIONS.FROM_WEST:
+      car.x = progress;
+      break;
+    case DIRECTIONS.FROM_EAST:
+      car.x = -progress;
+      break;
+    case DIRECTIONS.FROM_NORTH:
+      car.y = progress;
+      break;
+    case DIRECTIONS.FROM_SOUTH:
+      car.y = -progress;
+      break;
+  }
+}
+
+/**
+ * Calcula o limite de progresso imposto pelo semáforo para este carro.
+ * Retorna null se o semáforo não impuser nenhum limite no momento
+ * (sinal verde, ou o carro já passou da linha de parada e está
+ * comprometido a cruzar o cruzamento).
+ */
+function getStopLimit(car, currentProgress) {
+  const group = getLightGroupForDirection(car.spawnDirection);
+  const color = getGroupColor(group);
+
+  if (color === LIGHT_COLORS.GREEN) {
+    return null;
+  }
+
+  const nearEdgeProgress = getNearEdgeProgress(car.spawnDirection, canvas);
+  const halfCarLength = CAR_LENGTH / 2;
+  const noseProgress = currentProgress + halfCarLength;
+
+  // Se o carro já alcançou a borda do cruzamento, deixamos ele terminar
+  // de atravessar em vez de pará-lo no meio da via.
+  if (noseProgress >= nearEdgeProgress) {
+    return null;
+  }
+
+  return nearEdgeProgress - STOP_GAP - halfCarLength;
+}
+
+/**
+ * Retorna a que grupo de semáforo (EW ou NS) pertence uma direção de entrada.
+ */
+function getLightGroupForDirection(spawnDirection) {
+  return spawnDirection === DIRECTIONS.FROM_WEST || spawnDirection === DIRECTIONS.FROM_EAST
+    ? LIGHT_GROUPS.EW
+    : LIGHT_GROUPS.NS;
+}
+
+/**
+ * Retorna, em unidades de "progresso", a posição da borda do cruzamento
+ * mais próxima da origem de cada direção — ou seja, o ponto a partir do
+ * qual o carro está prestes a entrar na área do cruzamento.
+ */
+function getNearEdgeProgress(spawnDirection, canvas) {
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const halfRoad = ROAD_WIDTH / 2;
+
+  switch (spawnDirection) {
+    case DIRECTIONS.FROM_WEST:
+      return centerX - halfRoad;
+    case DIRECTIONS.FROM_EAST:
+      return -(centerX + halfRoad);
+    case DIRECTIONS.FROM_NORTH:
+      return centerY - halfRoad;
+    case DIRECTIONS.FROM_SOUTH:
+      return -(centerY + halfRoad);
+  }
 }
 
 /**
@@ -210,7 +372,7 @@ function createRandomCar(canvas) {
     id: `car-${nextCarId++}`,
     x,
     y,
-    width: 30,
+    width: CAR_LENGTH,
     height: 16,
     color: CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
     direction: angle,
