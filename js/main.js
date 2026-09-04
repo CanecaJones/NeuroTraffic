@@ -1,5 +1,7 @@
 // NeuroTraffic - Ponto de entrada da simulação
-// Etapa 5: substitui os carros fixos por geração aleatória de veículos.
+// Etapa 6: adiciona os semáforos (visual + lógica básica de estados).
+// Observação: nesta etapa os carros AINDA NÃO obedecem aos semáforos.
+// Isso será implementado na Etapa 7 (regras básicas de trânsito).
 
 const ROAD_WIDTH = 120;
 const MAX_CARS = 12;
@@ -14,6 +16,30 @@ const DIRECTIONS = {
   FROM_SOUTH: "from-south", // entra por baixo, indo para norte
 };
 
+// Grupos de semáforo: EW controla as entradas leste/oeste,
+// NS controla as entradas norte/sul. Apenas um grupo fica verde por vez.
+const LIGHT_GROUPS = {
+  EW: "ew",
+  NS: "ns",
+};
+
+const LIGHT_COLORS = {
+  RED: "red",
+  YELLOW: "yellow",
+  GREEN: "green",
+};
+
+// Sequência de fases do semáforo. Cada fase define a cor de cada grupo
+// e por quanto tempo (em segundos) essa fase dura.
+const LIGHT_PHASES = [
+  { duration: 5, ew: LIGHT_COLORS.GREEN, ns: LIGHT_COLORS.RED },
+  { duration: 2, ew: LIGHT_COLORS.YELLOW, ns: LIGHT_COLORS.RED },
+  { duration: 1, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.RED },
+  { duration: 5, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.GREEN },
+  { duration: 2, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.YELLOW },
+  { duration: 1, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.RED },
+];
+
 let canvas;
 let ctx;
 let cars = [];
@@ -21,19 +47,22 @@ let lastTimestamp = null;
 let spawnTimer = 0;
 let nextCarId = 0;
 
+let trafficLights;
+
 document.addEventListener("DOMContentLoaded", () => {
   canvas = document.getElementById("simulationCanvas");
   ctx = canvas.getContext("2d");
 
   spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
+  trafficLights = createTrafficLightSystem();
 
-  console.log("NeuroTraffic: geração aleatória de veículos ativada. Pronto para a Etapa 6.");
+  console.log("NeuroTraffic: semáforos ativos. Pronto para a Etapa 7.");
   requestAnimationFrame(gameLoop);
 });
 
 /**
  * Loop principal da simulação. Calcula o tempo decorrido desde o último
- * quadro (delta time), atualiza o estado dos carros e redesenha a cena.
+ * quadro (delta time), atualiza o estado da simulação e redesenha a cena.
  */
 function gameLoop(timestamp) {
   if (lastTimestamp === null) {
@@ -50,10 +79,9 @@ function gameLoop(timestamp) {
 }
 
 /**
- * Atualiza a simulação a cada quadro:
- * - move os carros existentes;
- * - remove os carros que saíram completamente do canvas;
- * - controla o timer de geração e cria novos carros aleatoriamente.
+ * Atualiza a simulação a cada quadro: move os carros, remove os que
+ * saíram do canvas, controla a geração de novos veículos e avança o
+ * estado dos semáforos.
  */
 function update(deltaSeconds) {
   cars.forEach((car) => {
@@ -64,6 +92,7 @@ function update(deltaSeconds) {
   cars = cars.filter((car) => !hasLeftCanvas(car, canvas));
 
   updateSpawning(deltaSeconds);
+  updateTrafficLights(deltaSeconds);
 }
 
 /**
@@ -80,6 +109,41 @@ function updateSpawning(deltaSeconds) {
     }
     spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
   }
+}
+
+/**
+ * Cria o sistema de semáforos, começando na primeira fase definida em
+ * LIGHT_PHASES.
+ */
+function createTrafficLightSystem() {
+  return {
+    phaseIndex: 0,
+    timeInPhase: 0,
+  };
+}
+
+/**
+ * Avança o tempo do semáforo e troca de fase quando o tempo da fase
+ * atual se esgota, avançando ciclicamente por LIGHT_PHASES.
+ */
+function updateTrafficLights(deltaSeconds) {
+  trafficLights.timeInPhase += deltaSeconds;
+
+  const currentPhase = LIGHT_PHASES[trafficLights.phaseIndex];
+
+  if (trafficLights.timeInPhase >= currentPhase.duration) {
+    trafficLights.timeInPhase = 0;
+    trafficLights.phaseIndex = (trafficLights.phaseIndex + 1) % LIGHT_PHASES.length;
+  }
+}
+
+/**
+ * Retorna a cor atual (red/yellow/green) de um grupo de semáforo
+ * ("ew" ou "ns"), consultando a fase atual do ciclo.
+ */
+function getGroupColor(group) {
+  const currentPhase = LIGHT_PHASES[trafficLights.phaseIndex];
+  return group === LIGHT_GROUPS.EW ? currentPhase.ew : currentPhase.ns;
 }
 
 /**
@@ -163,12 +227,83 @@ function randomBetween(min, max) {
 }
 
 /**
- * Redesenha a cena inteira: fundo, ruas, cruzamento e todos os carros
- * em suas posições atuais.
+ * Redesenha a cena inteira: fundo, ruas, cruzamento, semáforos e todos
+ * os carros em suas posições atuais.
  */
 function render() {
   drawScene(ctx, canvas);
+  drawTrafficLights(ctx, canvas);
   cars.forEach((car) => drawCar(ctx, car));
+}
+
+/**
+ * Desenha os quatro semáforos do cruzamento, um em cada canto, exibindo
+ * a cor atual do grupo correspondente (EW nos cantos superior-direito e
+ * inferior-esquerdo; NS nos cantos superior-esquerdo e inferior-direito).
+ */
+function drawTrafficLights(ctx, canvas) {
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const halfRoad = ROAD_WIDTH / 2;
+  const offset = 35;
+
+  const ewColor = getGroupColor(LIGHT_GROUPS.EW);
+  const nsColor = getGroupColor(LIGHT_GROUPS.NS);
+
+  drawTrafficLightBox(ctx, centerX - halfRoad - offset, centerY - halfRoad - offset, nsColor); // topo-esquerda
+  drawTrafficLightBox(ctx, centerX + halfRoad + offset, centerY - halfRoad - offset, ewColor); // topo-direita
+  drawTrafficLightBox(ctx, centerX - halfRoad - offset, centerY + halfRoad + offset, ewColor); // baixo-esquerda
+  drawTrafficLightBox(ctx, centerX + halfRoad + offset, centerY + halfRoad + offset, nsColor); // baixo-direita
+}
+
+/**
+ * Desenha uma caixa de semáforo (fundo escuro + três círculos: vermelho,
+ * amarelo e verde), destacando com brilho total a cor ativa e deixando
+ * as demais escurecidas.
+ */
+function drawTrafficLightBox(ctx, x, y, activeColor) {
+  const boxWidth = 20;
+  const boxHeight = 52;
+  const radius = 5;
+
+  ctx.save();
+  ctx.translate(x - boxWidth / 2, y - boxHeight / 2);
+
+  // Corpo da caixa do semáforo
+  ctx.fillStyle = "#1a1a1a";
+  drawRoundedRect(ctx, 0, 0, boxWidth, boxHeight, radius);
+  ctx.fill();
+
+  const lightRadius = 6;
+  const centerXOffset = boxWidth / 2;
+
+  drawSignalLight(ctx, centerXOffset, 12, lightRadius, "#ff4444", activeColor === LIGHT_COLORS.RED);
+  drawSignalLight(ctx, centerXOffset, 26, lightRadius, "#ffeb3b", activeColor === LIGHT_COLORS.YELLOW);
+  drawSignalLight(ctx, centerXOffset, 40, lightRadius, "#4caf50", activeColor === LIGHT_COLORS.GREEN);
+
+  ctx.restore();
+}
+
+/**
+ * Desenha um único círculo de sinal (farolete) do semáforo. Quando
+ * "isActive" é verdadeiro, a cor é exibida em brilho total; caso
+ * contrário, é desenhada escurecida para simular a lâmpada apagada.
+ */
+function drawSignalLight(ctx, x, y, radius, color, isActive) {
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = isActive ? color : "#3a3a3a";
+  ctx.fill();
+
+  if (isActive) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
 }
 
 /**

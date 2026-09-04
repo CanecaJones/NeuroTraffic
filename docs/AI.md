@@ -6,8 +6,11 @@ do tráfego. Será atualizado conforme a IA for introduzida no projeto
 
 ## Status Atual
 
-Ainda não há IA implementada. Esta etapa (Etapa 1) cria apenas a estrutura
-inicial do projeto.
+Os semáforos já existem na simulação (Etapa 6), mas seguem uma lógica de
+tempo fixo, sem nenhuma inteligência artificial envolvida ainda: cada grupo
+(leste-oeste / norte-sul) alterna entre verde, amarelo e vermelho seguindo
+durações pré-definidas no código. A IA propriamente dita ainda não foi
+implementada.
 
 ## Objetivo da IA (planejado)
 
