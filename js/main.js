@@ -1,6 +1,9 @@
 // NeuroTraffic - Ponto de entrada da simulação
-// Etapa 8: adiciona o sistema de métricas (tempo médio de espera, fila
-// atual, total de carros gerados e total de carros que atravessaram).
+// Etapa 9: substitui o ciclo de semáforo de tempo fixo por um algoritmo
+// simples de decisão baseado em regras (tamanho da fila de cada grupo).
+// IMPORTANTE: isso ainda NÃO é Inteligência Artificial (nada é aprendido).
+// É uma heurística fixa, que servirá de baseline para comparação com a
+// IA real, introduzida na Etapa 10.
 
 const ROAD_WIDTH = 120;
 const MAX_CARS = 12;
@@ -11,6 +14,13 @@ const CAR_LENGTH = 30; // igual à largura do carro (no eixo de movimento)
 const MIN_GAP = 8; // distância mínima entre o para-choque de um carro e o do próximo
 const STOP_GAP = 6; // distância entre o nariz do carro e a linha de parada
 const WAITING_MOVEMENT_THRESHOLD = 1; // px por quadro abaixo do qual o carro é considerado "parado"
+
+// Parâmetros do algoritmo de decisão do semáforo (Etapa 9).
+const MIN_GREEN_DURATION = 3; // segundos mínimos de verde, mesmo com fila pequena
+const MAX_GREEN_DURATION = 10; // segundos máximos de verde, mesmo com fila grande
+const YELLOW_DURATION = 2; // segundos de amarelo
+const ALL_RED_DURATION = 1; // segundos de "tudo vermelho" na troca (segurança)
+const SWITCH_QUEUE_ADVANTAGE = 2; // quantos carros a mais a fila oposta precisa ter para forçar a troca
 
 const DIRECTIONS = {
   FROM_WEST: "from-west", // entra pela esquerda, indo para leste
@@ -32,16 +42,13 @@ const LIGHT_COLORS = {
   GREEN: "green",
 };
 
-// Sequência de fases do semáforo. Cada fase define a cor de cada grupo
-// e por quanto tempo (em segundos) essa fase dura.
-const LIGHT_PHASES = [
-  { duration: 5, ew: LIGHT_COLORS.GREEN, ns: LIGHT_COLORS.RED },
-  { duration: 2, ew: LIGHT_COLORS.YELLOW, ns: LIGHT_COLORS.RED },
-  { duration: 1, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.RED },
-  { duration: 5, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.GREEN },
-  { duration: 2, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.YELLOW },
-  { duration: 1, ew: LIGHT_COLORS.RED, ns: LIGHT_COLORS.RED },
-];
+// Fases internas do controlador de semáforo (diferente de LIGHT_COLORS:
+// aqui representa em que estágio do ciclo de troca o sistema está).
+const LIGHT_PHASES = {
+  GREEN: "green",
+  YELLOW: "yellow",
+  ALL_RED: "all-red",
+};
 
 let canvas;
 let ctx;
@@ -68,7 +75,7 @@ document.addEventListener("DOMContentLoaded", () => {
     queue: document.getElementById("metric-queue"),
   };
 
-  console.log("NeuroTraffic: sistema de métricas ativo. Pronto para a Etapa 9.");
+  console.log("NeuroTraffic: algoritmo de decisão baseado em regras ativo. Pronto para a Etapa 10.");
   requestAnimationFrame(gameLoop);
 });
 
@@ -91,12 +98,12 @@ function gameLoop(timestamp) {
 }
 
 /**
- * Atualiza a simulação a cada quadro: avança os semáforos, move os
- * carros respeitando sinais e fila, remove os que saíram do canvas
- * (contabilizando métricas) e controla a geração de novos veículos.
+ * Atualiza a simulação a cada quadro: move os carros respeitando sinais
+ * e fila, atualiza as métricas, remove os carros que saíram do canvas,
+ * controla a geração de novos veículos e, por fim, decide o estado do
+ * semáforo com base nas filas atuais.
  */
 function update(deltaSeconds) {
-  updateTrafficLights(deltaSeconds);
   moveCarsWithTrafficRules(deltaSeconds);
 
   cars = cars.filter((car) => {
@@ -111,6 +118,11 @@ function update(deltaSeconds) {
   metrics.currentQueue = cars.filter((car) => car.isWaiting).length;
 
   updateSpawning(deltaSeconds);
+
+  // A decisão do semáforo depende do tamanho atual da fila de cada
+  // grupo, por isso é atualizada por último, já com os carros no
+  // estado deste quadro.
+  updateTrafficLights(deltaSeconds);
 }
 
 /**
@@ -311,38 +323,103 @@ function updateSpawning(deltaSeconds) {
 }
 
 /**
- * Cria o sistema de semáforos, começando na primeira fase definida em
- * LIGHT_PHASES.
+ * Cria o sistema de semáforos. O grupo EW começa verde, no estágio
+ * "green", com o timer zerado.
  */
 function createTrafficLightSystem() {
   return {
-    phaseIndex: 0,
-    timeInPhase: 0,
+    greenGroup: LIGHT_GROUPS.EW,
+    phase: LIGHT_PHASES.GREEN,
+    timer: 0,
   };
 }
 
 /**
- * Avança o tempo do semáforo e troca de fase quando o tempo da fase
- * atual se esgota, avançando ciclicamente por LIGHT_PHASES.
+ * Algoritmo simples de decisão do semáforo (baseado em regras fixas,
+ * SEM aprendizado — a "IA" de verdade vem na Etapa 10).
+ *
+ * Regras:
+ *   - O grupo com sinal verde permanece verde por, no mínimo,
+ *     MIN_GREEN_DURATION segundos (mesmo que a fila oposta esteja maior),
+ *     para evitar trocas rápidas demais.
+ *   - Após o mínimo, o sinal troca para amarelo caso:
+ *       a) o grupo atual já não tenha mais fila (nenhum carro esperando); ou
+ *       b) a fila do grupo oposto seja consideravelmente maior
+ *          (diferença >= SWITCH_QUEUE_ADVANTAGE).
+ *   - Independentemente da fila, o verde nunca dura mais que
+ *     MAX_GREEN_DURATION segundos, para não deixar o grupo oposto
+ *     esperando indefinidamente.
+ *   - Após o amarelo, há um breve período de "tudo vermelho"
+ *     (ALL_RED_DURATION) antes do outro grupo abrir, por segurança.
  */
 function updateTrafficLights(deltaSeconds) {
-  trafficLights.timeInPhase += deltaSeconds;
+  trafficLights.timer += deltaSeconds;
 
-  const currentPhase = LIGHT_PHASES[trafficLights.phaseIndex];
+  if (trafficLights.phase === LIGHT_PHASES.GREEN) {
+    const otherGroup = getOtherGroup(trafficLights.greenGroup);
+    const currentQueue = getQueueLengthForGroup(trafficLights.greenGroup);
+    const otherQueue = getQueueLengthForGroup(otherGroup);
 
-  if (trafficLights.timeInPhase >= currentPhase.duration) {
-    trafficLights.timeInPhase = 0;
-    trafficLights.phaseIndex = (trafficLights.phaseIndex + 1) % LIGHT_PHASES.length;
+    const reachedMinGreen = trafficLights.timer >= MIN_GREEN_DURATION;
+    const reachedMaxGreen = trafficLights.timer >= MAX_GREEN_DURATION;
+    const currentQueueIsEmpty = currentQueue === 0;
+    const otherQueueIsMuchBigger = otherQueue - currentQueue >= SWITCH_QUEUE_ADVANTAGE;
+
+    const shouldSwitch = reachedMaxGreen || (reachedMinGreen && (currentQueueIsEmpty || otherQueueIsMuchBigger));
+
+    if (shouldSwitch) {
+      trafficLights.phase = LIGHT_PHASES.YELLOW;
+      trafficLights.timer = 0;
+    }
+  } else if (trafficLights.phase === LIGHT_PHASES.YELLOW) {
+    if (trafficLights.timer >= YELLOW_DURATION) {
+      trafficLights.phase = LIGHT_PHASES.ALL_RED;
+      trafficLights.timer = 0;
+    }
+  } else if (trafficLights.phase === LIGHT_PHASES.ALL_RED) {
+    if (trafficLights.timer >= ALL_RED_DURATION) {
+      trafficLights.greenGroup = getOtherGroup(trafficLights.greenGroup);
+      trafficLights.phase = LIGHT_PHASES.GREEN;
+      trafficLights.timer = 0;
+    }
   }
 }
 
 /**
+ * Retorna o grupo oposto ao informado ("ew" -> "ns" e vice-versa).
+ */
+function getOtherGroup(group) {
+  return group === LIGHT_GROUPS.EW ? LIGHT_GROUPS.NS : LIGHT_GROUPS.EW;
+}
+
+/**
+ * Conta quantos carros de um grupo de semáforo (EW ou NS) estão
+ * atualmente parados/esperando (car.isWaiting), usado pelo algoritmo de
+ * decisão para comparar o tamanho das filas.
+ */
+function getQueueLengthForGroup(group) {
+  return cars.filter((car) => car.isWaiting && getLightGroupForDirection(car.spawnDirection) === group).length;
+}
+
+/**
  * Retorna a cor atual (red/yellow/green) de um grupo de semáforo
- * ("ew" ou "ns"), consultando a fase atual do ciclo.
+ * ("ew" ou "ns"), com base no grupo que está com o verde e na fase
+ * atual do controlador.
  */
 function getGroupColor(group) {
-  const currentPhase = LIGHT_PHASES[trafficLights.phaseIndex];
-  return group === LIGHT_GROUPS.EW ? currentPhase.ew : currentPhase.ns;
+  const isGreenGroup = group === trafficLights.greenGroup;
+
+  if (!isGreenGroup) {
+    return LIGHT_COLORS.RED;
+  }
+
+  if (trafficLights.phase === LIGHT_PHASES.GREEN) {
+    return LIGHT_COLORS.GREEN;
+  }
+  if (trafficLights.phase === LIGHT_PHASES.YELLOW) {
+    return LIGHT_COLORS.YELLOW;
+  }
+  return LIGHT_COLORS.RED; // fase "all-red"
 }
 
 /**

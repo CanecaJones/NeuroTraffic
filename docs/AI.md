@@ -6,11 +6,25 @@ do tráfego. Será atualizado conforme a IA for introduzida no projeto
 
 ## Status Atual
 
-Os semáforos já existem na simulação (Etapa 6), mas seguem uma lógica de
-tempo fixo, sem nenhuma inteligência artificial envolvida ainda: cada grupo
-(leste-oeste / norte-sul) alterna entre verde, amarelo e vermelho seguindo
-durações pré-definidas no código. A IA propriamente dita ainda não foi
-implementada.
+O controle dos semáforos (Etapa 9) agora usa um **algoritmo baseado em
+regras fixas**, e não mais um ciclo de tempo fixo simples: a duração do
+verde de cada grupo (leste-oeste / norte-sul) varia entre um mínimo e um
+máximo, dependendo do tamanho da fila de cada lado. Ainda assim, isso
+**não é Inteligência Artificial** — não há aprendizado, apenas regras
+escritas manualmente (`if/else`). Esse algoritmo serve como **baseline**:
+mais adiante, quando a IA real for implementada (Etapa 10), poderemos
+comparar as métricas (tempo médio de espera, fila, throughput) entre essa
+heurística e a IA treinada.
+
+### Regras atuais do algoritmo baseado em regras
+
+- Verde mínimo de 3 segundos, mesmo que a fila oposta esteja maior.
+- Verde máximo de 10 segundos, mesmo que ainda haja fila no grupo atual.
+- Entre o mínimo e o máximo, o sinal troca para amarelo se:
+  - a fila do grupo atual chegar a zero; ou
+  - a fila do grupo oposto for pelo menos 2 carros maior que a do grupo atual.
+- Após o amarelo (2s), há 1 segundo de "tudo vermelho" antes do outro
+  grupo abrir, por segurança.
 
 ## Objetivo da IA (planejado)
 

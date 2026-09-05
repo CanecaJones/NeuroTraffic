@@ -14,7 +14,7 @@ para otimizar o controle de semáforos em um cruzamento.
 
 ## Status do Projeto
 
-🚧 Em desenvolvimento — Etapa 8 (sistema de métricas).
+🚧 Em desenvolvimento — Etapa 9 (algoritmo simples de decisão).
 
 ## Tecnologias
 
@@ -71,7 +71,7 @@ npx serve .
 6. Semáforos ✅
 7. Regras básicas de trânsito ✅
 8. Sistema de métricas ✅
-9. Algoritmo simples de decisão
+9. Algoritmo simples de decisão ✅
 10. Introdução da Inteligência Artificial
 
 ## Licença
