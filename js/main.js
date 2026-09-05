@@ -1,9 +1,15 @@
 // NeuroTraffic - Ponto de entrada da simulação
-// Etapa 9: substitui o ciclo de semáforo de tempo fixo por um algoritmo
-// simples de decisão baseado em regras (tamanho da fila de cada grupo).
-// IMPORTANTE: isso ainda NÃO é Inteligência Artificial (nada é aprendido).
-// É uma heurística fixa, que servirá de baseline para comparação com a
-// IA real, introduzida na Etapa 10.
+// Etapa 10: introduz a primeira Inteligência Artificial do projeto.
+//
+// A IA controla a troca dos semáforos usando Q-Learning tabular, uma
+// técnica clássica de Reinforcement Learning: o agente observa um
+// "estado" (fila do grupo que está verde e fila do grupo oposto),
+// escolhe uma "ação" (manter o verde ou trocar) e recebe uma
+// "recompensa" (quanto menor a fila total, melhor). Com o tempo, o
+// agente aprende quais ações tendem a reduzir a fila.
+//
+// É possível alternar, a qualquer momento, entre essa IA e o algoritmo
+// de regras fixas da Etapa 9, para comparar o comportamento dos dois.
 
 const ROAD_WIDTH = 120;
 const MAX_CARS = 12;
@@ -15,12 +21,25 @@ const MIN_GAP = 8; // distância mínima entre o para-choque de um carro e o do 
 const STOP_GAP = 6; // distância entre o nariz do carro e a linha de parada
 const WAITING_MOVEMENT_THRESHOLD = 1; // px por quadro abaixo do qual o carro é considerado "parado"
 
-// Parâmetros do algoritmo de decisão do semáforo (Etapa 9).
+// Parâmetros comuns aos dois controladores de semáforo (regras e IA).
 const MIN_GREEN_DURATION = 3; // segundos mínimos de verde, mesmo com fila pequena
-const MAX_GREEN_DURATION = 10; // segundos máximos de verde, mesmo com fila grande
+const MAX_GREEN_DURATION = 10; // segundos máximos de verde (limite de segurança para os dois modos)
 const YELLOW_DURATION = 2; // segundos de amarelo
 const ALL_RED_DURATION = 1; // segundos de "tudo vermelho" na troca (segurança)
-const SWITCH_QUEUE_ADVANTAGE = 2; // quantos carros a mais a fila oposta precisa ter para forçar a troca
+const SWITCH_QUEUE_ADVANTAGE = 2; // (modo regras) diferença de fila que força a troca
+
+// Parâmetros do agente de IA (Q-Learning).
+const AI_LEARNING_RATE = 0.15; // alpha: o quanto cada nova experiência atualiza o conhecimento
+const AI_DISCOUNT_FACTOR = 0.9; // gamma: importância dada a recompensas futuras
+const AI_EPSILON_MIN = 0.05; // exploração mínima, mesmo depois de muito treino
+const AI_EPSILON_DECAY_STEPS = 1500; // decisões até a exploração cair perto do mínimo
+const AI_QUEUE_BUCKETS = 4; // filas são discretizadas em 0, 1, 2, 3+ para reduzir o número de estados
+const AI_ACTIONS = { KEEP: "KEEP", SWITCH: "SWITCH" };
+
+const CONTROLLER_MODES = {
+  RULES: "rules",
+  AI: "ai",
+};
 
 const DIRECTIONS = {
   FROM_WEST: "from-west", // entra pela esquerda, indo para leste
@@ -60,6 +79,9 @@ let nextCarId = 0;
 let trafficLights;
 let metrics;
 let metricsElements;
+let controllerMode = CONTROLLER_MODES.RULES;
+let aiAgent;
+let controllerToggleBtn;
 
 document.addEventListener("DOMContentLoaded", () => {
   canvas = document.getElementById("simulationCanvas");
@@ -68,16 +90,39 @@ document.addEventListener("DOMContentLoaded", () => {
   spawnTimer = randomBetween(SPAWN_MIN_INTERVAL, SPAWN_MAX_INTERVAL);
   trafficLights = createTrafficLightSystem();
   metrics = createMetrics();
+  aiAgent = createAIAgent();
+
   metricsElements = {
     spawned: document.getElementById("metric-spawned"),
     crossed: document.getElementById("metric-crossed"),
     avgWait: document.getElementById("metric-avg-wait"),
     queue: document.getElementById("metric-queue"),
+    mode: document.getElementById("metric-mode"),
+    epsilon: document.getElementById("metric-epsilon"),
   };
 
-  console.log("NeuroTraffic: algoritmo de decisão baseado em regras ativo. Pronto para a Etapa 10.");
+  controllerToggleBtn = document.getElementById("controllerToggleBtn");
+  controllerToggleBtn.addEventListener("click", toggleControllerMode);
+
+  console.log("NeuroTraffic: IA (Q-Learning) disponível. Use o botão para alternar entre IA e regras fixas.");
   requestAnimationFrame(gameLoop);
 });
+
+/**
+ * Alterna o modo de controle do semáforo entre "regras fixas" (Etapa 9)
+ * e "IA" (Q-Learning, Etapa 10). Ao trocar, reinicia a referência de
+ * estado/ação anterior da IA, para não misturar experiências dos dois
+ * modos.
+ */
+function toggleControllerMode() {
+  controllerMode = controllerMode === CONTROLLER_MODES.RULES ? CONTROLLER_MODES.AI : CONTROLLER_MODES.RULES;
+  aiAgent.lastState = null;
+  aiAgent.lastAction = null;
+
+  const isAiActive = controllerMode === CONTROLLER_MODES.AI;
+  controllerToggleBtn.textContent = isAiActive ? "Usar regras fixas" : "Ativar IA (Q-Learning)";
+  controllerToggleBtn.classList.toggle("ai-active", isAiActive);
+}
 
 /**
  * Loop principal da simulação. Calcula o tempo decorrido desde o último
@@ -100,8 +145,8 @@ function gameLoop(timestamp) {
 /**
  * Atualiza a simulação a cada quadro: move os carros respeitando sinais
  * e fila, atualiza as métricas, remove os carros que saíram do canvas,
- * controla a geração de novos veículos e, por fim, decide o estado do
- * semáforo com base nas filas atuais.
+ * controla a geração de novos veículos e decide o estado do semáforo
+ * (via regras fixas ou via IA, dependendo do modo atual).
  */
 function update(deltaSeconds) {
   moveCarsWithTrafficRules(deltaSeconds);
@@ -118,10 +163,6 @@ function update(deltaSeconds) {
   metrics.currentQueue = cars.filter((car) => car.isWaiting).length;
 
   updateSpawning(deltaSeconds);
-
-  // A decisão do semáforo depende do tamanho atual da fila de cada
-  // grupo, por isso é atualizada por último, já com os carros no
-  // estado deste quadro.
   updateTrafficLights(deltaSeconds);
 }
 
@@ -335,37 +376,39 @@ function createTrafficLightSystem() {
 }
 
 /**
- * Algoritmo simples de decisão do semáforo (baseado em regras fixas,
- * SEM aprendizado — a "IA" de verdade vem na Etapa 10).
- *
- * Regras:
- *   - O grupo com sinal verde permanece verde por, no mínimo,
- *     MIN_GREEN_DURATION segundos (mesmo que a fila oposta esteja maior),
- *     para evitar trocas rápidas demais.
- *   - Após o mínimo, o sinal troca para amarelo caso:
- *       a) o grupo atual já não tenha mais fila (nenhum carro esperando); ou
- *       b) a fila do grupo oposto seja consideravelmente maior
- *          (diferença >= SWITCH_QUEUE_ADVANTAGE).
- *   - Independentemente da fila, o verde nunca dura mais que
- *     MAX_GREEN_DURATION segundos, para não deixar o grupo oposto
- *     esperando indefinidamente.
- *   - Após o amarelo, há um breve período de "tudo vermelho"
- *     (ALL_RED_DURATION) antes do outro grupo abrir, por segurança.
+ * Cria o agente de IA (Q-Learning), começando sem nenhum conhecimento
+ * (tabela Q vazia) e sem estado/ação anteriores registrados.
+ */
+function createAIAgent() {
+  return {
+    qTable: {},
+    lastState: null,
+    lastAction: null,
+    lastReward: 0,
+    decisionsCount: 0,
+  };
+}
+
+/**
+ * Decide, a cada quadro, se o semáforo deve trocar de fase, usando o
+ * controlador ativo (regras fixas ou IA). Os limites de segurança
+ * (verde mínimo/máximo, duração do amarelo e do "tudo vermelho") valem
+ * para os dois modos; o que muda é apenas COMO se decide trocar de
+ * verde para amarelo dentro da janela permitida.
  */
 function updateTrafficLights(deltaSeconds) {
   trafficLights.timer += deltaSeconds;
 
   if (trafficLights.phase === LIGHT_PHASES.GREEN) {
-    const otherGroup = getOtherGroup(trafficLights.greenGroup);
-    const currentQueue = getQueueLengthForGroup(trafficLights.greenGroup);
-    const otherQueue = getQueueLengthForGroup(otherGroup);
-
     const reachedMinGreen = trafficLights.timer >= MIN_GREEN_DURATION;
     const reachedMaxGreen = trafficLights.timer >= MAX_GREEN_DURATION;
-    const currentQueueIsEmpty = currentQueue === 0;
-    const otherQueueIsMuchBigger = otherQueue - currentQueue >= SWITCH_QUEUE_ADVANTAGE;
 
-    const shouldSwitch = reachedMaxGreen || (reachedMinGreen && (currentQueueIsEmpty || otherQueueIsMuchBigger));
+    let shouldSwitch = reachedMaxGreen;
+
+    if (!shouldSwitch && reachedMinGreen) {
+      shouldSwitch =
+        controllerMode === CONTROLLER_MODES.AI ? decideSwitchWithAI() : decideSwitchWithRules();
+    }
 
     if (shouldSwitch) {
       trafficLights.phase = LIGHT_PHASES.YELLOW;
@@ -386,6 +429,125 @@ function updateTrafficLights(deltaSeconds) {
 }
 
 /**
+ * Algoritmo de regras fixas (Etapa 9): troca o sinal se a fila do grupo
+ * atual estiver zerada, ou se a fila oposta for consideravelmente maior.
+ */
+function decideSwitchWithRules() {
+  const otherGroup = getOtherGroup(trafficLights.greenGroup);
+  const currentQueue = getQueueLengthForGroup(trafficLights.greenGroup);
+  const otherQueue = getQueueLengthForGroup(otherGroup);
+
+  const currentQueueIsEmpty = currentQueue === 0;
+  const otherQueueIsMuchBigger = otherQueue - currentQueue >= SWITCH_QUEUE_ADVANTAGE;
+
+  return currentQueueIsEmpty || otherQueueIsMuchBigger;
+}
+
+/**
+ * Algoritmo de IA (Q-Learning, Etapa 10): observa o estado atual (fila
+ * do grupo verde e fila do grupo oposto, discretizadas), escolhe uma
+ * ação (manter o verde ou trocar) com uma política epsilon-greedy, e
+ * atualiza a tabela Q com base na experiência anterior.
+ */
+function decideSwitchWithAI() {
+  const state = getAIStateKey();
+  ensureQEntry(state);
+
+  const epsilon = getAIEpsilon();
+  const isExploring = Math.random() < epsilon;
+  const action = isExploring ? randomAction() : bestActionForState(state);
+
+  const reward = computeAIReward();
+
+  // Atualiza a experiência anterior agora que já conhecemos o estado
+  // seguinte (s') e a melhor ação futura estimada a partir dele.
+  if (aiAgent.lastState !== null) {
+    const bestNextValue = Math.max(aiAgent.qTable[state][AI_ACTIONS.KEEP], aiAgent.qTable[state][AI_ACTIONS.SWITCH]);
+    const previousQ = aiAgent.qTable[aiAgent.lastState][aiAgent.lastAction];
+    const updatedQ =
+      previousQ + AI_LEARNING_RATE * (aiAgent.lastReward + AI_DISCOUNT_FACTOR * bestNextValue - previousQ);
+    aiAgent.qTable[aiAgent.lastState][aiAgent.lastAction] = updatedQ;
+  }
+
+  aiAgent.lastState = state;
+  aiAgent.lastAction = action;
+  aiAgent.lastReward = reward;
+  aiAgent.decisionsCount += 1;
+
+  return action === AI_ACTIONS.SWITCH;
+}
+
+/**
+ * Garante que a tabela Q tenha uma entrada para o estado informado,
+ * inicializando os valores de ambas as ações em zero na primeira vez
+ * que o estado é visto.
+ */
+function ensureQEntry(state) {
+  if (!aiAgent.qTable[state]) {
+    aiAgent.qTable[state] = { [AI_ACTIONS.KEEP]: 0, [AI_ACTIONS.SWITCH]: 0 };
+  }
+}
+
+/**
+ * Retorna a ação com maior valor Q estimado para o estado informado
+ * (exploração "gananciosa"/greedy).
+ */
+function bestActionForState(state) {
+  const values = aiAgent.qTable[state];
+  return values[AI_ACTIONS.KEEP] >= values[AI_ACTIONS.SWITCH] ? AI_ACTIONS.KEEP : AI_ACTIONS.SWITCH;
+}
+
+/**
+ * Sorteia uma ação aleatória entre as disponíveis (usado na exploração).
+ */
+function randomAction() {
+  return Math.random() < 0.5 ? AI_ACTIONS.KEEP : AI_ACTIONS.SWITCH;
+}
+
+/**
+ * Recompensa usada pelo agente: quanto menor a fila total no momento da
+ * decisão, maior (menos negativa) a recompensa. Isso incentiva o agente
+ * a aprender políticas que mantêm as filas pequenas.
+ */
+function computeAIReward() {
+  const currentQueue = getQueueLengthForGroup(trafficLights.greenGroup);
+  const otherQueue = getQueueLengthForGroup(getOtherGroup(trafficLights.greenGroup));
+  return -(currentQueue + otherQueue);
+}
+
+/**
+ * Monta a chave de estado usada pela tabela Q: combina o grupo que está
+ * verde com as filas (discretizadas em faixas) do grupo atual e do
+ * grupo oposto, mantendo o espaço de estados pequeno o suficiente para
+ * uma tabela simples.
+ */
+function getAIStateKey() {
+  const currentQueue = getQueueLengthForGroup(trafficLights.greenGroup);
+  const otherQueue = getQueueLengthForGroup(getOtherGroup(trafficLights.greenGroup));
+
+  return `${trafficLights.greenGroup}|${bucketQueue(currentQueue)}|${bucketQueue(otherQueue)}`;
+}
+
+/**
+ * Agrupa um valor de fila em uma faixa discreta (0, 1, 2 ou "3+"), para
+ * reduzir o número de estados possíveis da IA.
+ */
+function bucketQueue(queueLength) {
+  return Math.min(queueLength, AI_QUEUE_BUCKETS - 1);
+}
+
+/**
+ * Calcula a taxa de exploração (epsilon) atual da IA: começa alta
+ * (bastante exploração/aleatoriedade) e decai gradualmente conforme o
+ * agente acumula decisões, até um mínimo, para continuar se adaptando a
+ * mudanças no padrão de tráfego mesmo depois de treinado.
+ */
+function getAIEpsilon() {
+  const decayProgress = Math.min(aiAgent.decisionsCount / AI_EPSILON_DECAY_STEPS, 1);
+  return 1 - decayProgress * (1 - AI_EPSILON_MIN);
+}
+
+/**
  * Retorna o grupo oposto ao informado ("ew" -> "ns" e vice-versa).
  */
 function getOtherGroup(group) {
@@ -394,8 +556,7 @@ function getOtherGroup(group) {
 
 /**
  * Conta quantos carros de um grupo de semáforo (EW ou NS) estão
- * atualmente parados/esperando (car.isWaiting), usado pelo algoritmo de
- * decisão para comparar o tamanho das filas.
+ * atualmente parados/esperando (car.isWaiting).
  */
 function getQueueLengthForGroup(group) {
   return cars.filter((car) => car.isWaiting && getLightGroupForDirection(car.spawnDirection) === group).length;
@@ -517,8 +678,8 @@ function render() {
 
 /**
  * Atualiza os elementos do DOM do painel de métricas com os valores
- * atuais: total gerado, total que atravessou, tempo médio de espera e
- * tamanho da fila atual.
+ * atuais: total gerado, total que atravessou, tempo médio de espera,
+ * tamanho da fila atual, modo de controle e taxa de exploração da IA.
  */
 function renderMetricsPanel() {
   const averageWait = metrics.totalCrossed > 0 ? metrics.totalWaitTimeSum / metrics.totalCrossed : 0;
@@ -527,6 +688,9 @@ function renderMetricsPanel() {
   metricsElements.crossed.textContent = metrics.totalCrossed;
   metricsElements.avgWait.textContent = `${averageWait.toFixed(1)}s`;
   metricsElements.queue.textContent = metrics.currentQueue;
+  metricsElements.mode.textContent = controllerMode === CONTROLLER_MODES.AI ? "IA (Q-Learning)" : "Regras fixas";
+  metricsElements.epsilon.textContent =
+    controllerMode === CONTROLLER_MODES.AI ? getAIEpsilon().toFixed(2) : "-";
 }
 
 /**

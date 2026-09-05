@@ -15,6 +15,10 @@
   <main>
     <canvas id="simulationCanvas" width="800" height="600"></canvas>
 
+    <div class="controls">
+      <button id="controllerToggleBtn" class="toggle-button">Ativar IA (Q-Learning)</button>
+    </div>
+
     <section class="metrics-panel" id="metricsPanel">
       <div class="metric">
         <span class="metric-label">Carros gerados</span>
@@ -32,11 +36,19 @@
         <span class="metric-label">Fila atual</span>
         <span class="metric-value" id="metric-queue">0</span>
       </div>
+      <div class="metric">
+        <span class="metric-label">Modo de controle</span>
+        <span class="metric-value" id="metric-mode">Regras fixas</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Exploração da IA (ε)</span>
+        <span class="metric-value" id="metric-epsilon">-</span>
+      </div>
     </section>
   </main>
 
   <footer>
-    <p>Etapa 8: Sistema de métricas</p>
+    <p>Etapa 10: Introdução da Inteligência Artificial</p>
   </footer>
 
   <script src="js/main.js"></script>

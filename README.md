@@ -14,7 +14,11 @@ para otimizar o controle de semáforos em um cruzamento.
 
 ## Status do Projeto
 
-🚧 Em desenvolvimento — Etapa 9 (algoritmo simples de decisão).
+🎉 Roadmap inicial completo — Etapa 10 (introdução da Inteligência
+Artificial). O projeto já possui uma simulação visual funcional com IA
+(Q-Learning) controlando os semáforos, alternável com um algoritmo de
+regras fixas para comparação. Próximos passos ficam a critério de
+evolução futura (veja a seção "Roadmap Futuro" abaixo).
 
 ## Tecnologias
 
@@ -72,7 +76,17 @@ npx serve .
 7. Regras básicas de trânsito ✅
 8. Sistema de métricas ✅
 9. Algoritmo simples de decisão ✅
-10. Introdução da Inteligência Artificial
+10. Introdução da Inteligência Artificial ✅
+
+## Roadmap Futuro (ideias, não planejado em detalhe ainda)
+
+- Múltiplos cruzamentos
+- Diferentes tipos de veículos
+- Pedestres
+- Veículos de emergência
+- Comparação automatizada entre IA e semáforos tradicionais
+- Persistência do aprendizado da IA
+- Possível migração de parte da IA para Python (ex: Stable-Baselines3)
 
 ## Licença
 
